@@ -1629,29 +1629,28 @@ void database::_apply_block( const signed_block& next_block )
       wlog("!!!!!! Updating mining difficulty...");
       const auto& gprops = get_dynamic_global_properties();
       fc::time_point_sec now = fc::time_point::now();
-      fc::microseconds interval = now - gprops.last_mining_recalc_time;
-      float actual = (float)interval.to_seconds();
-      float expected = XGT_MINING_RECALC_EVERY_N_BLOCKS * XGT_MINING_BLOCKS_PER_SECOND;
-      float ratio = actual / expected;
+      fc::microseconds timespan = now - gprops.last_mining_recalc_time;
 
-      // Limit the adjustment by a factor of 4 (to prevent massive changes from one target to the next)
-      float adjusted_ratio = ratio;
-      float reciprocal = 1.0f / XGT_MINING_ADJUSTMENT_MAX_FACTOR;
-      if (adjusted_ratio < reciprocal)
-         adjusted_ratio = reciprocal;
-      else if (adjusted_ratio > XGT_MINING_ADJUSTMENT_MAX_FACTOR)
-         adjusted_ratio = XGT_MINING_ADJUSTMENT_MAX_FACTOR;
+      float actual_timespan = (float)timespan.to_seconds();
+      float target_timespan = XGT_MINING_RECALC_EVERY_N_BLOCKS * XGT_MINING_BLOCKS_PER_SECOND;
 
-      wlog("Updating mining difficulty ratio ${w} adjusted_ratio ${x}", ("w",ratio)("x",adjusted_ratio));
+      if (actual_timespan < target_timespan / XGT_MINING_ADJUSTMENT_MAX_FACTOR)
+         actual_timespan = target_timespan / XGT_MINING_ADJUSTMENT_MAX_FACTOR;
+      if (actual_timespan > target_timespan * XGT_MINING_ADJUSTMENT_MAX_FACTOR)
+         actual_timespan = target_timespan * XGT_MINING_ADJUSTMENT_MAX_FACTOR;
 
-      const fc::sha256 max_target_h = fc::sha256(XGT_MINING_TARGET_MAX);
-      boost::multiprecision::uint256_t max_target = hash_to_bigint(max_target_h);
       const fc::sha256 previous_target_h = gprops.mining_target;
       boost::multiprecision::uint256_t previous_target = hash_to_bigint(previous_target_h);
       boost::multiprecision::cpp_dec_float_50 previous_target_f(previous_target);
-      boost::multiprecision::cpp_dec_float_50 next_target_f = previous_target_f * adjusted_ratio;
+
+      boost::multiprecision::cpp_dec_float_50 next_target_f = (previous_target_f * actual_timespan) / target_timespan;
       boost::multiprecision::uint256_t next_target(next_target_f);
       fc::sha256 next_target_h = bigint_to_hash(next_target);
+
+      wlog("Updating mining difficulty ratio ${x}", ("x",next_target_h));
+
+      const fc::sha256 max_target_h = fc::sha256(XGT_MINING_TARGET_MAX);
+      boost::multiprecision::uint256_t max_target = hash_to_bigint(max_target_h);
       if (next_target >= max_target)
       {
          wlog( "Capping next target ${a} to be lower than ${b}",
@@ -1659,10 +1658,24 @@ void database::_apply_block( const signed_block& next_block )
          next_target = max_target;
          next_target_h = bigint_to_hash(next_target);
       }
-      wlog("Updating mining difficulty next target... ${w}", ("w",next_target_h));
+
+      /*
+      timespan = lastBlockTime - firstBlockTime; // 2016 blocks apart, ideally
+
+      if (timespan < targetTimespan / 4) 
+         timespan = targetTimespan / 4
+      if (timespan > targetTimespan * 4)
+         timespan = targetTimespan  * 4
+
+      newDifficulty = (lastBlockDifficulty * actualTimespan) / targetTimespan;
+
+      if (newDifficulty > powLimit)
+         newDifficulty = powLimit;
+      */
 
       modify( gprops, [&]( dynamic_global_property_object& dgp ) {
          dgp.mining_target = next_target_h;
+         dgp.last_mining_recalc_time = now;
       });
    }
 
