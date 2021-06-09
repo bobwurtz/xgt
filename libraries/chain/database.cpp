@@ -1846,93 +1846,85 @@ void database::_apply_transaction(const signed_transaction& trx)
    if( !(skip&skip_validate) )   /* issue #505 explains why this skip_flag is disabled */
       trx.validate();
 
-   auto& trx_idx = get_index<transaction_index>();
    const chain_id_type& chain_id = get_chain_id();
-   // idump((trx_id)(skip&skip_transaction_dupe_check));
-   FC_ASSERT( (skip & skip_transaction_dupe_check) ||
-              trx_idx.indices().get<by_trx_id>().find(trx_id) == trx_idx.indices().get<by_trx_id>().end(),
-              "Duplicate transaction check failed", ("trx_ix", trx_id) );
 
-   if( !(skip & (skip_transaction_signatures | skip_authority_check) ) )
+   auto get_money    = [&]( const string& name ) { return authority( get< account_authority_object, by_account >( name ).money ); };
+   auto get_recovery = [&]( const string& name ) { return authority( get< account_authority_object, by_account >( name ).recovery ); };
+   auto get_social   = [&]( const string& name ) { return authority( get< account_authority_object, by_account >( name ).social ); };
+
+   const auto& operations = trx.operations;
+   try
    {
-      auto get_money    = [&]( const string& name ) { return authority( get< account_authority_object, by_account >( name ).money ); };
-      auto get_recovery = [&]( const string& name ) { return authority( get< account_authority_object, by_account >( name ).recovery ); };
-      auto get_social   = [&]( const string& name ) { return authority( get< account_authority_object, by_account >( name ).social ); };
-
-      const auto& operations = trx.operations;
-      try
+      for (auto& op : operations)
       {
-         for (auto& op : operations)
-         {
-            if ( is_pow_operation(op) ) {
-               const pow_operation& o = op.template get< pow_operation >();
-               auto wallet_name = o.get_worker_name();
+         if ( is_pow_operation(op) ) {
+            const pow_operation& o = op.template get< pow_operation >();
+            auto wallet_name = o.get_worker_name();
 
-               flat_set<public_key_type> key_set = trx.get_signature_keys(get_chain_id(), fc::ecc::fc_canonical);
-               shared_authority money = get< account_authority_object, by_account >( wallet_name ).money;
-               fc::optional<public_key_type> public_key;
-               vector<public_key_type> money_key_set = money.get_keys();
-               for (const public_key_type& key : money_key_set) {
-                  if (key_set.find(key) != key_set.end())
-                  {
-                     public_key = fc::optional<public_key_type>(key);
-                     break;
-                  }
-               }
-               shared_authority recovery = get< account_authority_object, by_account >( wallet_name ).recovery;
-               vector<public_key_type> recovery_key_set = recovery.get_keys();
-               for (const public_key_type& key : recovery_key_set) {
-                  if (key_set.find(key) != key_set.end())
-                  {
-                     public_key = fc::optional<public_key_type>(key);
-                     break;
-                  }
-               }
-               if (public_key == fc::optional<public_key_type>())
+            flat_set<public_key_type> key_set = trx.get_signature_keys(get_chain_id(), fc::ecc::fc_canonical);
+            shared_authority money = get< account_authority_object, by_account >( wallet_name ).money;
+            fc::optional<public_key_type> public_key;
+            vector<public_key_type> money_key_set = money.get_keys();
+            for (const public_key_type& key : money_key_set) {
+               if (key_set.find(key) != key_set.end())
                {
-                  wlog("!!!!!! Wallet no public key");
-                  throw operation_validate_exception();
+                  public_key = fc::optional<public_key_type>(key);
+                  break;
                }
             }
-            else if ( is_wallet_create_operation(op) )
-            {
-               wlog("!!!!!! Wallet create");
-               break;
+            shared_authority recovery = get< account_authority_object, by_account >( wallet_name ).recovery;
+            vector<public_key_type> recovery_key_set = recovery.get_keys();
+            for (const public_key_type& key : recovery_key_set) {
+               if (key_set.find(key) != key_set.end())
+               {
+                  public_key = fc::optional<public_key_type>(key);
+                  break;
+               }
             }
-            else if ( is_wallet_update_operation(op) )
+            if (public_key == fc::optional<public_key_type>())
             {
-               // TODO: DRY this out
-               const wallet_update_operation& o = op.template get< wallet_update_operation >();
-               shared_authority recovery = get< account_authority_object, by_account >( o.wallet ).recovery;
-               vector<public_key_type> recovery_key_set = recovery.get_keys();
-               flat_set<public_key_type> key_set = trx.get_signature_keys(get_chain_id(), fc::ecc::fc_canonical);
-               vector<public_key_type> keys;
-               keys.reserve(key_set.size());
-               for (const public_key_type& key : key_set) {
-                  keys.push_back(key);
-               }
-               string wallet_name = wallet_create_operation::get_wallet_name(keys);
-               wlog("!!!!!! Wallet update wallet name ${w}", ("w",wallet_name));
-               if (o.wallet == wallet_name) {
-                  // Valid, don't throw error
-                  wlog("!!!!!! Wallet update valid");
-               } else {
-                  // TODO: Invalid, throw error
-                  wlog("!!!!!! Wallet update invalid");
-                  throw operation_validate_exception();
-               }
+               wlog("!!!!!! Wallet no public key");
+               throw operation_validate_exception();
             }
          }
-         trx.verify_authority( chain_id, get_money, get_recovery, get_social, XGT_MAX_SIG_CHECK_DEPTH,
-               XGT_MAX_AUTHORITY_MEMBERSHIP,
-               XGT_MAX_SIG_CHECK_WALLETS,
-               fc::ecc::bip_0062 );
+         else if ( is_wallet_create_operation(op) )
+         {
+            wlog("!!!!!! Wallet create");
+            break;
+         }
+         else if ( is_wallet_update_operation(op) )
+         {
+            // TODO: DRY this out
+            const wallet_update_operation& o = op.template get< wallet_update_operation >();
+            shared_authority recovery = get< account_authority_object, by_account >( o.wallet ).recovery;
+            vector<public_key_type> recovery_key_set = recovery.get_keys();
+            flat_set<public_key_type> key_set = trx.get_signature_keys(get_chain_id(), fc::ecc::fc_canonical);
+            vector<public_key_type> keys;
+            keys.reserve(key_set.size());
+            for (const public_key_type& key : key_set) {
+               keys.push_back(key);
+            }
+            string wallet_name = wallet_create_operation::get_wallet_name(keys);
+            wlog("!!!!!! Wallet update wallet name ${w}", ("w",wallet_name));
+            if (o.wallet == wallet_name) {
+               // Valid, don't throw error
+               wlog("!!!!!! Wallet update valid");
+            } else {
+               // TODO: Invalid, throw error
+               wlog("!!!!!! Wallet update invalid");
+               throw operation_validate_exception();
+            }
+         }
       }
-      catch( protocol::tx_missing_money_auth& e )
-      {
-         if( get_shared_db_merkle().find( head_block_num() + 1 ) == get_shared_db_merkle().end() )
-            throw e;
-      }
+      trx.verify_authority( chain_id, get_money, get_recovery, get_social, XGT_MAX_SIG_CHECK_DEPTH,
+            XGT_MAX_AUTHORITY_MEMBERSHIP,
+            XGT_MAX_SIG_CHECK_WALLETS,
+            fc::ecc::bip_0062 );
+   }
+   catch( protocol::tx_missing_money_auth& e )
+   {
+      if( get_shared_db_merkle().find( head_block_num() + 1 ) == get_shared_db_merkle().end() )
+         throw e;
    }
 
    //Skip all manner of expiration and TaPoS checking if we're on block 1; It's impossible that the transaction is
