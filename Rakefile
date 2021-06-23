@@ -5,10 +5,10 @@ require 'json'
 require 'bigdecimal'
 require 'shellwords'
 require 'rake/testtask'
-require'xgt/ruby'
+require 'xgt/ruby'
 
 def mining_disabled?
-  ENV['MINING_DISABLED'] == 'TRUE'
+  ENV['MINING_DISABLED'] == 'FALSE'
 end
 
 def flush_testnet?
@@ -16,7 +16,7 @@ def flush_testnet?
 end
 
 def wallet
-  ENV['XGT_WALLET'] || 'XGT0000000000000000000000000000000000000000'
+  ENV['XGT_WALLET'] || 'XGT_WALLET'
 end
 
 def wif
@@ -24,11 +24,11 @@ def wif
 end
 
 def recovery_private_key
-  ENV['XGT_RECOVERY_PRIVATE_KEY'] || '5JNHfZYKGaomSFvd4NUdQ9qMcEAC43kujbfjueTHpVapX1Kzq2n'
+  ENV['XGT_RECOVERY_PRIVATE_KEY'] || 'PRIVATE_RECOVERY_KEY'
 end
 
 def witness_private_key
-  ENV['XGT_WITNESS_PRIVATE_KEY'] || '5JNHfZYKGaomSFvd4NUdQ9qMcEAC43kujbfjueTHpVapX1Kzq2n'
+  ENV['XGT_WITNESS_PRIVATE_KEY'] || 'PRIVATE_RECOVERY_KEY'
 end
 
 def host
@@ -36,7 +36,11 @@ def host
 end
 
 def seed_host
-  ENV['XGT_SEED_HOST']
+  ENV['XGT_SEED_HOST'] || '45.138.27.42:2001'
+end
+
+def mining_threads
+  ENV['MINING_THREADS'] || 4
 end
 
 def instance_index
@@ -140,7 +144,7 @@ task :run do
       webserver-http-endpoint = #{my_host}:#{8751 + instance_index * 2}
 
       miner = ["#{wallet}","#{wif}"]
-      mining-threads = 1
+      mining-threads = #{mining_threads}
       witness = "#{wallet}"
       private-key = #{recovery_private_key}
       mining-reward-key = #{witness_private_key}

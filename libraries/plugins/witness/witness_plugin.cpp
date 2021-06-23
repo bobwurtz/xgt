@@ -48,7 +48,7 @@ void new_chain_banner( const chain::database& db )
       "********************************\n"
       "*                              *\n"
       "*   ------- NEW CHAIN ------   *\n"
-      "*   -   Welcome to Xgt!  -   *\n"
+      "*   -   Welcome to Xgt!  -     *\n"
       "*   ------------------------   *\n"
       "*                              *\n"
       "********************************\n"
@@ -99,6 +99,10 @@ namespace detail {
       block_id_type _head_block_id = block_id_type();
       uint64_t _total_hashes = 0;
       fc::time_point _hash_start_time;
+
+    private:
+      boost::mutex sha_found_mutex;
+      boost::condition_variable condition;
    };
 
    void check_memo( const string& memo, const chain::wallet_object& account, const account_authority_object& auth )
@@ -251,7 +255,8 @@ namespace detail {
       static uint64_t seed = fc::time_point::now().time_since_epoch().count();
       static uint64_t start = fc::city_hash64( (const char*)&seed, sizeof(seed) );
       auto block_id = _db.head_block_id();
-      //fc::thread* mainthread = &fc::thread::current();
+      fc::thread* mainthread = &fc::thread::current();
+      uint32_t thread_num = 0;
       _total_hashes = 0;
       _hash_start_time = fc::time_point::now();
       uint32_t target = _db.get_pow_summary_target();
@@ -259,84 +264,94 @@ namespace detail {
       auto acct_it = acct_idx.find( miner );
       bool has_account = (acct_it != acct_idx.end());
 
-      auto& t = _thread_pool[0];
-      t->async( [=]()
-      {
-         uint64_t nonce = start;
-         protocol::sha2_pow work;
-         protocol::pow_operation op;
-         op.props = _miner_prop_vote;
+      for(auto& t : _thread_pool) {
 
-         uint32_t lowest = 0xffffffff;
-         while (true)
-         {
-            if( _is_braking )
-            {
-               break;
-            }
+        t->async( [=]()
+        {
+           uint64_t nonce = start + thread_num;
+           protocol::sha2_pow work;
+           protocol::pow_operation op;
+           op.props = _miner_prop_vote;
 
-            auto head_block_num = _db.head_block_num();
-            auto head_block_time = _db.head_block_time();
-            if( this->_head_block_num != head_block_num )
-            {
-               wlog( "Stop mining due new block arrival, nonce: ${n} ${o} ${p}", ("n", nonce)("o",this->_head_block_num)("p",head_block_num) );
-               this->_head_block_num = head_block_num;
-               break;
-            }
+           uint32_t lowest = 0xffffffff;
+           while (true)
+           {
+              if( _is_braking )
+              {
+                 break;
+              }
 
-            ++this->_total_hashes;
-            ++nonce;
-            work.create( block_id, miner, nonce );
+              auto head_block_num = _db.head_block_num();
+              auto head_block_time = _db.head_block_time();
+              if( this->_head_block_num != head_block_num )
+              {
+                 wlog( "Stop mining due new block arrival, nonce: ${n} ${o} ${p}", ("n", nonce)("o",this->_head_block_num)("p",head_block_num) );
+                 this->_head_block_num = head_block_num;
+                 break;
+              }
 
-            if (work.pow_summary < lowest) lowest = work.pow_summary;
-            if (this->_total_hashes % 1000000 == 0) {
-               wlog("!!!!!! work.pow_summary target ${p} ${t}", ("p",lowest)("t",target));
-            }
+              ++this->_total_hashes;
+              ++nonce;
+              work.create( block_id, miner, nonce );
 
-            if( work.pow_summary < target && work.is_valid() )
-            {
-               protocol::signed_transaction trx;
-               work.prev_block = block_id;
-               op.work = work;
-               if( !has_account )
-                  op.new_recovery_key = pub;
-               trx.operations.push_back( op );
-               trx.ref_block_num = head_block_num;
-               trx.ref_block_prefix = work.input.prev_block._hash[1];
-               trx.set_expiration( head_block_time + XGT_MAX_TIME_UNTIL_EXPIRATION );
-               trx.sign( pk, XGT_CHAIN_ID, fc::ecc::fc_canonical );
+              if (work.pow_summary < lowest) lowest = work.pow_summary;
+              if (this->_total_hashes % 1000000 == 0) {
+                 wlog("!!!!!! work.pow_summary target ${p} ${t}", ("p",lowest)("t",target));
+              }
 
-               wlog( "Broadcasting..." );
-               try
-               {
-                  wlog("Mined block proceeding #${n} with timestamp ${t} at time ${c}", ("n", head_block_num)("t", head_block_time)("c", fc::time_point::now()));
-                  //mainthread->async( [this,trx,miner,pk]()
-                  //{
-                     fc::time_point now = fc::time_point::now();
-                     auto block = _chain_plugin.generate_block( now, miner, pk, _production_skip_flags);
-                     _db.push_block(block, (uint32_t)0);
-                     appbase::app().get_plugin< xgt::plugins::p2p::p2p_plugin >().broadcast_block( block );
-                     wlog( "Broadcasting Proof of Work for ${miner}", ("miner", miner) );
-                     _db.push_transaction( trx );
-                     appbase::app().get_plugin< xgt::plugins::p2p::p2p_plugin >().broadcast_transaction( trx );
+              if( work.pow_summary < target && work.is_valid() )
+              {
+                 protocol::signed_transaction trx;
+                 work.prev_block = block_id;
+                 op.work = work;
+                 if( !has_account )
+                    op.new_recovery_key = pub;
+                 trx.operations.push_back( op );
+                 trx.ref_block_num = head_block_num;
+                 trx.ref_block_prefix = work.input.prev_block._hash[1];
+                 trx.set_expiration( head_block_time + XGT_MAX_TIME_UNTIL_EXPIRATION );
+                 trx.sign( pk, XGT_CHAIN_ID, fc::ecc::fc_canonical );
 
-                     ++this->_head_block_num;
-                  //} );
-                  wlog( "Broadcast succeeded!" );
-               }
-               catch( const fc::exception& e )
-               {
-                  wlog( "Broadcast failed!" );
-                  wdump((e.to_detail_string()));
-               }
-               break;
-            }
-         }
-         if (!_is_braking)
-         {
-            schedule_production_loop();
-         }
-      } );
+                 wlog( "Broadcasting..." );
+                 try
+                 {
+                    wlog("Mined block proceeding #${n} with timestamp ${t} at time ${c}", ("n", head_block_num)("t", head_block_time)("c", fc::time_point::now()));
+                    mainthread->async( [this,trx,miner,pk]()
+                    {
+
+                       boost::unique_lock<boost::mutex> lock(this->sha_found_mutex);
+
+                       fc::time_point now = fc::time_point::now();
+                       auto block = _chain_plugin.generate_block( now, miner, pk, _production_skip_flags);
+                       _db.push_block(block, (uint32_t)0);
+                       appbase::app().get_plugin< xgt::plugins::p2p::p2p_plugin >().broadcast_block( block );
+                       wlog( "Broadcasting Proof of Work for ${miner}", ("miner", miner) );
+                       _db.push_transaction( trx );
+                       appbase::app().get_plugin< xgt::plugins::p2p::p2p_plugin >().broadcast_transaction( trx );
+
+                       ++this->_head_block_num;
+
+                       this->condition.notify_one();
+
+                    } );
+                    wlog( "Broadcast succeeded!" );
+                 }
+                 catch( const fc::exception& e )
+                 {
+                    wlog( "Broadcast failed!" );
+                    wdump((e.to_detail_string()));
+                 }
+                 break;
+              }
+           }
+           if (!_is_braking)
+           {
+              schedule_production_loop();
+           }
+        } );
+
+        thread_num++;
+      }
    }
 
    void witness_plugin_impl::schedule_production_loop() {
@@ -481,6 +496,16 @@ void witness_plugin::plugin_initialize(const boost::program_options::variables_m
    my->_thread_pool.resize(1);
    my->_thread_pool[0] = std::make_shared<fc::thread>();
 
+   uint32_t _mining_threads;
+
+   if( options.count("mining-threads") )
+   {
+      _mining_threads = std::min( options["mining-threads"].as<uint32_t>(), uint32_t(64) );
+      my->_thread_pool.resize( _mining_threads );
+      for( uint32_t i = 0; i < _mining_threads; ++i )
+         my->_thread_pool[i] = std::make_shared<fc::thread>();
+   }
+
    if( options.count("miner-account-creation-fee") )
    {
       const uint64_t account_creation_fee = options["miner-account-creation-fee"].as<uint64_t>();
@@ -566,6 +591,7 @@ void witness_plugin::plugin_shutdown()
       chain::util::disconnect_signal( my->_pre_apply_operation_conn );
       chain::util::disconnect_signal( my->_post_apply_operation_conn );
       my->_timer.cancel();
+      my->_thread_pool.clear();
    }
    catch(fc::exception& e)
    {
