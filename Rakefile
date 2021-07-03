@@ -81,7 +81,6 @@ task :configure do
     mkdir -p ../xgt-build \
       && cd ../xgt-build \
       && cmake -D CMAKE_BUILD_TYPE=RelWithDebInfo \
-               --target xgtd \
                ../xgt
   )
 end
