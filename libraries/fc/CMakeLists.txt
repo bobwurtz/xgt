@@ -214,9 +214,7 @@ set( fc_sources
      src/crypto/sha256.cpp
      src/crypto/sha224.cpp
      src/crypto/sha512.cpp
-     src/crypto/blowfish.cpp
      src/crypto/elliptic_common.cpp
-     src/crypto/restartable_sha256.cpp
      ${ECC_REST}
      src/crypto/elliptic_${ECC_IMPL}.cpp
      src/crypto/rand.cpp
@@ -230,8 +228,6 @@ set( fc_sources
      src/network/resolve.cpp
      src/network/url.cpp
      src/network/gntp.cpp
-     src/compress/smaz.cpp
-     src/compress/zlib.cpp
      src/reflect/typename.cpp
      vendor/cyoencode-1.0.2/src/CyoDecode.c
      vendor/cyoencode-1.0.2/src/CyoEncode.c
@@ -252,7 +248,7 @@ add_subdirectory( vendor/websocketpp )
 setup_library( fc SOURCES ${sources} LIBRARY_TYPE STATIC DONT_INSTALL_LIBRARY )
 
 if( NOT CPP_STANDARD )
-  set( CPP_STANDARD, "-std=c++11" )
+  set( CPP_STANDARD, "-std=c++14" )
 endif()
 
 IF(WIN32)
@@ -273,7 +269,7 @@ IF(WIN32)
      # Put MinGW specific compiler settings here
   endif()
 ELSE()
-  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99 -Wall")
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11 -Wall")
 
   IF(APPLE)
     SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CPP_STANDARD} -stdlib=libc++ -Wall")
